@@ -1,0 +1,326 @@
+{
+  "Comment": "Analyze blog data and save results",
+  "StartAt": "Transform Markdown",
+  "States": {
+    "Transform Markdown": {
+      "Type": "Task",
+      "Resource": "${LambdaInvoke}",
+      "Parameters": {
+        "FunctionName": "${MarkdownToText}",
+        "Payload": {
+          "content.$": "$.content"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Analyze",
+      "ResultPath": "$.transformed"
+    },
+    "Analyze": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "Get Summary From ChatGPT",
+          "States": {
+            "Get Summary From ChatGPT": {
+              "Type": "Task",
+              "Resource": "${LambdaInvoke}",
+              "Parameters": {
+                "FunctionName": "${AskChatGPT}",
+                "Payload": {
+                  "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
+                  "systemContext": "You are an AI for professional writers. You process technical content and summarize it for non-technical people and beginners",
+                  "query.$": "States.Format('Summarize the content of this blog in for an OG description for high SEO ranking. It should mimic the authors tone and be in the POV of the author: {}', $.transformed.Payload.text)",
+                  "rememberResponse": true
+                }
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 6,
+                  "BackoffRate": 2
+                }
+              ],
+              "ResultPath": "$.description",
+              "Next": "Get Meta Info From ChatGPT"
+            },
+            "Get Meta Info From ChatGPT": {
+              "Type": "Task",
+              "Resource": "${LambdaInvoke}",
+              "Parameters": {
+                "FunctionName": "${AskChatGPT}",
+                "Payload": {
+                  "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
+                  "query": "Create a json object for that content with the following properties: sentiment, tone, and wordCount. Sentiment should have a single word value.",
+                  "outputFormat": "json"
+                }
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 6,
+                  "BackoffRate": 2
+                }
+              ],
+              "Next": "Get Social Info From ChatGPT",
+              "ResultPath": "$.meta"
+            },
+            "Get Social Info From ChatGPT": {
+              "Type": "Task",
+              "Resource": "${LambdaInvoke}",
+              "Parameters": {
+                "FunctionName": "${AskChatGPT}",
+                "Payload": {
+                  "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
+                  "query": "Create a json object for that content with the following properties: reddit (object), reddit.title, reddit.subreddit, linkedIn (string), twitter (string). the  subreddit property would be where it best fits in reddit. the linkedin property is a social post to advertise the content, the twitter property is a tweet to advertise. The social posts should be in the POV of the author and mimic the tone",
+                  "outputFormat": "json"
+                }
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 6,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true,
+              "ResultPath": "$.social"
+            }
+          }
+        },
+        {
+          "StartAt": "Start Text To Speech",
+          "States": {
+            "Start Text To Speech": {
+              "Type": "Task",
+              "Parameters": {
+                "Engine": "neural",
+                "OutputFormat": "mp3",
+                "OutputS3BucketName": "${S3BucketName}",
+                "OutputS3KeyPrefix": "audio/",
+                "Text.$": "$.transformed.Payload.text",
+                "VoiceId": "Matthew",
+                "SnsTopicArn": "${PollyCompleteTopic}"
+              },
+              "Resource": "${StartSynthesisTask}",
+              "Next": "Save Synthesis Detail"
+            },
+            "Save Synthesis Detail": {
+              "Type": "Task",
+              "Resource": "${DynamoDbPutAndWait}",
+              "Parameters": {
+                "TableName": "${DynamoTableName}",
+                "Item": {
+                  "pk": {
+                    "S.$": "$.SynthesisTask.TaskId"
+                  },
+                  "sk": {
+                    "S": "text-synthesis"
+                  },
+                  "taskToken": {
+                    "S.$": "$$.Task.Token"
+                  },
+                  "stepFunctionsExecutionId": {
+                    "S.$": "$$.Execution.Id"
+                  }
+                }
+              },
+              "Next": "Clean Up After Synthesis",
+              "ResultPath": null
+            },
+            "Clean Up After Synthesis": {
+              "Type": "Parallel",
+              "Branches": [
+                {
+                  "StartAt": "Remove Synthesis Detail",
+                  "States": {
+                    "Remove Synthesis Detail": {
+                      "Type": "Task",
+                      "Resource": "${DynamoDbDeleteItem}",
+                      "Parameters": {
+                        "TableName": "${DynamoTableName}",
+                        "Key": {
+                          "pk": {
+                            "S.$": "$.SynthesisTask.TaskId"
+                          },
+                          "sk": {
+                            "S": "synthesis-task"
+                          }
+                        }
+                      },
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "Make Audio Public",
+                  "States": {
+                    "Make Audio Public": {
+                      "Type": "Task",
+                      "End": true,
+                      "Parameters": {
+                        "Bucket": "${S3BucketName}",
+                        "Key.$": "States.Format('audio/.{}.mp3', $.SynthesisTask.TaskId)",
+                        "Acl": "public-read"
+                      },
+                      "Resource": "${S3PutObjectAcl}"
+                    }
+                  }
+                }
+              ],
+              "End": true,
+              "ResultPath": null
+            }
+          }
+        }
+      ],
+      "Next": "Format Processed Data",
+      "ResultPath": "$.analysis"
+    },
+    "Format Processed Data": {
+      "Type": "Pass",
+      "Parameters": {
+        "metadata.$": "$.analysis[0].meta.Payload.response",
+        "social.$": "$.analysis[0].social.Payload.response",
+        "description.$": "$.analysis[0].description.Payload.response",
+        "audio.$": "$.analysis[1].SynthesisTask.OutputUri",
+        "originalMetadata.$": "$.transformed.Payload.metadata",
+        "markdown.$": "$.transformed.Payload.markdown"
+      },
+      "Next": "Save Processed Data"
+    },
+    "Save Processed Data": {
+      "Type": "Parallel",
+      "End": true,
+      "Branches": [
+        {
+          "StartAt": "Update in GitHub",
+          "States": {
+            "Update in GitHub": {
+              "Type": "Task",
+              "Resource": "${LambdaInvoke}",
+              "OutputPath": "$.Payload",
+              "Parameters": {
+                "FunctionName": "${UpdateInGitHub}",
+                "Payload": {
+                  "originalMetadata.$": "$.originalMetadata",
+                  "audio.$": "$.audio",
+                  "newMetadata.$": "$.metadata",
+                  "description.$": "$.description",
+                  "fileName.$": "$$.Execution.Input.fileName",
+                  "markdown.$": "$.markdown"
+                }
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 6,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "Update DynamoDB",
+          "States": {
+            "Update DynamoDB": {
+              "Type": "Task",
+              "Resource": "${DynamoDbUpdateItem}",
+              "Parameters": {
+                "TableName": "${DynamoTableName}",
+                "Key": {
+                  "pk": {
+                    "S.$": "$$.Execution.Input.key"
+                  },
+                  "sk": {
+                    "S": "article"
+                  }
+                },
+                "UpdateExpression": "SET analysis = :analysis, social = :social, audio = :audio, processedOn = :processedOn",
+                "ExpressionAttributeValues": {
+                  ":processedOn": {
+                    "S.$": "$$.Execution.StartTime"
+                  },
+                  ":audio": {
+                    "S.$": "$.audio"
+                  },
+                  ":analysis": {
+                    "M": {
+                      "sentiment": {
+                        "S.$": "$.metadata.sentiment"
+                      },
+                      "tone": {
+                        "S.$": "$.metadata.tone"
+                      },
+                      "wordCount": {
+                        "N.$": "States.Format('{}', $.metadata.wordCount)"
+                      }
+                    }
+                  },
+                  ":social": {
+                    "M": {
+                      "reddit": {
+                        "M": {
+                          "title": {
+                            "S.$": "$.social.reddit.title"
+                          },
+                          "subreddit": {
+                            "S.$": "$.social.reddit.subreddit"
+                          }
+                        }
+                      },
+                      "linkedIn": {
+                        "S.$": "$.social.linkedIn"
+                      },
+                      "twitter": {
+                        "S.$": "$.social.twitter"
+                      }
+                    }
+                  }
+                }
+              },
+              "End": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}

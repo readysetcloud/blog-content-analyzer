@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Analyze blog post text
+
+Parameters:
+  TableName:
+    Type: String
+    Description: Name of DynamoDB table to store data
+  SecretId:
+    Type: String
+    Description: Identifier of the Secrets Manager Secret that holds your GitHub PAT
+  GitHubOwner:
+    Type: String
+  GitHubRepo:
+    Type: String
+  BucketName:
+    Type: String
+    Description: Name of the S3 Bucket to store generated audio
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Architectures:
+      - arm64
+    Tracing: Active
+    Timeout: 3
+    MemorySize: 1024
+    Handler: index.handler
+    Environment:
+      Variables:
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+
+Resources:
+  MarkdownToTextFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/markdown-to-text
+      Policies:
+        - AWSLambdaBasicExecutionRole
+
+  TextSynthesisCompleteTopic:
+    Type: AWS::SNS::Topic
+
+  ResumeWorkflowAfterSynthesisFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/resume-after-synthesis
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}
+            - Effect: Allow
+              Action: states:SendTaskSuccess
+              Resource: '*'
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableName
+      Events:
+        JobComplete:
+          Type: SNS
+          Properties:
+            SqsSubscription: true
+            Topic: !Ref TextSynthesisCompleteTopic
+
+  UpdateInGitHubFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/update-in-github
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretId}*
+      Environment:
+        Variables:
+          OWNER: !Ref GitHubOwner
+          REPO: !Ref GitHubRepo
+          CONTENT_PATH: content/blog
+          SECRET_ID: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretId}
+        
+  AnalyzePostStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      DefinitionUri: workflows/analyze.asl.json
+      DefinitionSubstitutions:
+        LambdaInvoke: !Sub arn:${AWS::Partition}:states:::lambda:invoke
+        MarkdownToText: !GetAtt MarkdownToTextFunction.Arn
+        AskChatGPT: "{{resolve:ssm:/serverless-toolbox/ask-chatgpt}}"
+        S3BucketName: !Ref BucketName
+        PollyCompleteTopic: !Ref TextSynthesisCompleteTopic
+        StartSynthesisTask: !Sub arn:${AWS::Partition}:states:::aws-sdk:polly:startSpeechSynthesisTask
+        DynamoDbPutAndWait: !Sub arn:${AWS::Partition}:states:::aws-sdk:dynamodb:putItem.waitForTaskToken
+        DynamoTableName: !Ref TableName
+        DynamoDbDeleteItem: !Sub arn:${AWS::Partition}:states:::dynamodb:deleteItem
+        S3PutObjectAcl: !Sub arn:${AWS::Partition}:states:::aws-sdk:s3:putObjectAcl
+        UpdateInGitHub: !GetAtt UpdateInGitHubFunction.Arn
+        DynamoDbUpdateItem: !Sub arn:${AWS::Partition}:states:::dynamodb:updateItem
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource:
+                - !GetAtt MarkdownToTextFunction.Arn
+                - "{{resolve:ssm:/serverless-toolbox/ask-chatgpt}}"
+                - !GetAtt UpdateInGitHubFunction.Arn
+            - Effect: Allow
+              Action: 
+                - dynamodb:PutItem
+                - dynamodb:DeleteItem
+                - dynamodb:UpdateItem
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}
+            - Effect: Allow
+              Action:
+                - polly:StartSpeechSynthesisTask
+                - polly:GetSpeechSynthesisTask
+                - polly:ListSpeechSynthesisTasks
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:PutObjectAcl
+              Resource: !Sub arn:${AWS::Partition}:s3:::${BucketName}/audio/*
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref TextSynthesisCompleteTopic
