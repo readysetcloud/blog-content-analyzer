@@ -68,7 +68,7 @@
                 "FunctionName": "${AskChatGPT}",
                 "Payload": {
                   "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
-                  "query": "Create a json object for that content with the following properties: sentiment, tone, and wordCount. Sentiment should have a single word value.",
+                  "query": "Create a json object for that content with the following properties: sentiment, tone, writingStyle, skillLevel, and wordCount. Sentiment should have a single word value. WritingStyle should summarize the writer's style in fewer than 30 words. SkillLevel should rate the writing skill level on a scale of 1-10. Wordcount is the total number of words in the content.",
                   "outputFormat": "json"
                 }
               },
@@ -291,6 +291,12 @@
                       },
                       "wordCount": {
                         "N.$": "States.Format('{}', $.metadata.wordCount)"
+                      },
+                      "writingStyle": {
+                        "S.$": "$.metadata.writingStyle"
+                      },
+                      "skillLevel": {
+                        "N.$": "States.Format('{}', $.metadata.skillLevel)"
                       }
                     }
                   },
