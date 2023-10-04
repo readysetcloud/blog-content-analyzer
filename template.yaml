@@ -7,9 +7,6 @@ Parameters:
   TableName:
     Type: String
     Description: Name of DynamoDB table to store data
-  SecretId:
-    Type: String
-    Description: Identifier of the Secrets Manager Secret that holds your GitHub PAT
   GitHubOwner:
     Type: String
   GitHubRepo:
@@ -76,14 +73,14 @@ Resources:
           Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
-              Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretId}*
+              Resource: "{{resolve:ssm:/serverless-toolbox/secrets}}"
       Environment:
         Variables:
           OWNER: !Ref GitHubOwner
           REPO: !Ref GitHubRepo
           CONTENT_PATH: content/blog
-          SECRET_ID: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretId}
-        
+          SECRET_ID: "{{resolve:ssm:/serverless-toolbox/secrets}}"
+
   AnalyzePostStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
@@ -112,7 +109,7 @@ Resources:
                 - "{{resolve:ssm:/serverless-toolbox/ask-chatgpt}}"
                 - !GetAtt UpdateInGitHubFunction.Arn
             - Effect: Allow
-              Action: 
+              Action:
                 - dynamodb:PutItem
                 - dynamodb:DeleteItem
                 - dynamodb:UpdateItem
