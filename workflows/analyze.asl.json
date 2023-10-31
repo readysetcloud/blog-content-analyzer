@@ -59,61 +59,121 @@
                 }
               ],
               "ResultPath": "$.description",
-              "Next": "Get Meta Info From ChatGPT"
+              "Next": "Meta and Social Posts"
             },
-            "Get Meta Info From ChatGPT": {
-              "Type": "Task",
-              "Resource": "${LambdaInvoke}",
-              "Parameters": {
-                "FunctionName": "${AskChatGPT}",
-                "Payload": {
-                  "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
-                  "query": "Create a json object for that content with the following properties: sentiment, tone, writingStyle, skillLevel, and wordCount. Sentiment should have a single word value. WritingStyle should summarize the writer's style in fewer than 30 words. SkillLevel should rate the writing skill level on a scale of 1-10. Wordcount is the total number of words in the content.",
-                  "outputFormat": "json"
-                }
-              },
-              "Retry": [
+            "Meta and Social Posts": {
+              "Type": "Parallel",
+              "Branches": [
                 {
-                  "ErrorEquals": [
-                    "Lambda.ServiceException",
-                    "Lambda.AWSLambdaException",
-                    "Lambda.SdkClientException",
-                    "Lambda.TooManyRequestsException"
-                  ],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 6,
-                  "BackoffRate": 2
+                  "StartAt": "Get Meta Info From ChatGPT",
+                  "States": {
+                    "Get Meta Info From ChatGPT": {
+                      "Type": "Task",
+                      "Resource": "${LambdaInvoke}",
+                      "Parameters": {
+                        "FunctionName": "${AskChatGPT}",
+                        "Payload": {
+                          "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
+                          "query": "Create a json object for that content with the following properties: sentiment, tone, writingStyle, skillLevel, and wordCount. Sentiment should have a single word value. WritingStyle should summarize the writer's style in fewer than 30 words. SkillLevel should rate the writing skill level on a scale of 1-10. Wordcount is the total number of words in the content.",
+                          "outputFormat": "json"
+                        }
+                      },
+                      "Retry": [
+                        {
+                          "ErrorEquals": [
+                            "Lambda.ServiceException",
+                            "Lambda.AWSLambdaException",
+                            "Lambda.SdkClientException",
+                            "Lambda.TooManyRequestsException"
+                          ],
+                          "IntervalSeconds": 2,
+                          "MaxAttempts": 6,
+                          "BackoffRate": 2
+                        }
+                      ],
+                      "ResultPath": "$.meta",
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "Create Social Media Posts",
+                  "States": {
+                    "Create Social Media Posts": {
+                      "Type": "Task",
+                      "Resource": "${LambdaInvoke}",
+                      "Parameters": {
+                        "FunctionName": "${AskChatGPT}",
+                        "Payload": {
+                          "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
+                          "query.$": "States.Format('Create 8 twitter posts that will advertise this blog over the next 2 months. Create them in the writers tone and style and use at most one emoji. Include this link to the article at the end of the tweet: https://readysetcloud.io{}. Respond only with a JSON array of strings, each message as a new string and do not number them', $.key)",
+                          "outputFormat": "json"
+                        }
+                      },
+                      "Retry": [
+                        {
+                          "ErrorEquals": [
+                            "Lambda.ServiceException",
+                            "Lambda.AWSLambdaException",
+                            "Lambda.SdkClientException",
+                            "Lambda.TooManyRequestsException"
+                          ],
+                          "IntervalSeconds": 2,
+                          "MaxAttempts": 6,
+                          "BackoffRate": 2
+                        }
+                      ],
+                      "Next": "Format Scheduler Event",
+                      "OutputPath": "$.Payload"
+                    },
+                    "Format Scheduler Event": {
+                      "Type": "Task",
+                      "Resource": "${LambdaInvoke}",
+                      "OutputPath": "$.Payload",
+                      "Parameters": {
+                        "FunctionName": "${FormatSocialPostEvent}",
+                        "Payload": {
+                          "messages.$": "$.response",
+                          "campaign.$": "$$.Execution.Input.fileName",
+                          "platform": "twitter"
+                        }
+                      },
+                      "Retry": [
+                        {
+                          "ErrorEquals": [
+                            "Lambda.ServiceException",
+                            "Lambda.AWSLambdaException",
+                            "Lambda.SdkClientException",
+                            "Lambda.TooManyRequestsException"
+                          ],
+                          "IntervalSeconds": 1,
+                          "MaxAttempts": 3,
+                          "BackoffRate": 2
+                        }
+                      ],
+                      "Next": "Schedule Social Posts"
+                    },
+                    "Schedule Social Posts": {
+                      "Type": "Task",
+                      "Resource": "${EventBridgePutEvents}",
+                      "Parameters": {
+                        "Entries": [
+                          {
+                            "Detail": {
+                              "messages.$": "$.messages"
+                            },
+                            "DetailType": "Schedule Social Post",
+                            "Source": "Analyze Text State Machine"
+                          }
+                        ]
+                      },
+                      "End": true
+                    }
+                  }
                 }
               ],
-              "Next": "Get Social Info From ChatGPT",
-              "ResultPath": "$.meta"
-            },
-            "Get Social Info From ChatGPT": {
-              "Type": "Task",
-              "Resource": "${LambdaInvoke}",
-              "Parameters": {
-                "FunctionName": "${AskChatGPT}",
-                "Payload": {
-                  "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
-                  "query": "Create a json object for that content with the following properties: reddit (object), reddit.title, reddit.subreddit, linkedIn (string), twitter (string). the  subreddit property would be where it best fits in reddit. the linkedin property is a social post to advertise the content, the twitter property is a tweet to advertise. The social posts should be in the POV of the author and mimic the tone",
-                  "outputFormat": "json"
-                }
-              },
-              "Retry": [
-                {
-                  "ErrorEquals": [
-                    "Lambda.ServiceException",
-                    "Lambda.AWSLambdaException",
-                    "Lambda.SdkClientException",
-                    "Lambda.TooManyRequestsException"
-                  ],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 6,
-                  "BackoffRate": 2
-                }
-              ],
-              "End": true,
-              "ResultPath": "$.social"
+              "ResultPath": "$.metaDescription",
+              "End": true
             }
           }
         },
@@ -209,8 +269,7 @@
     "Format Processed Data": {
       "Type": "Pass",
       "Parameters": {
-        "metadata.$": "$.analysis[0].meta.Payload.response",
-        "social.$": "$.analysis[0].social.Payload.response",
+        "metadata.$": "$.analysis[0].metaDescription[0].meta.Payload.response",
         "description.$": "$.analysis[0].description.Payload.response",
         "audio.$": "$.analysis[1].SynthesisTask.OutputUri",
         "originalMetadata.$": "$.transformed.Payload.metadata",
@@ -297,26 +356,6 @@
                       },
                       "skillLevel": {
                         "N.$": "States.Format('{}', $.metadata.skillLevel)"
-                      }
-                    }
-                  },
-                  ":social": {
-                    "M": {
-                      "reddit": {
-                        "M": {
-                          "title": {
-                            "S.$": "$.social.reddit.title"
-                          },
-                          "subreddit": {
-                            "S.$": "$.social.reddit.subreddit"
-                          }
-                        }
-                      },
-                      "linkedIn": {
-                        "S.$": "$.social.linkedIn"
-                      },
-                      "twitter": {
-                        "S.$": "$.social.twitter"
                       }
                     }
                   }
