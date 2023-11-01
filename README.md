@@ -1,8 +1,10 @@
 # Blog Analyzer
 
-This repository contains a serverless application that takes Markdown, generates an audio file using AWS Polly, and performs text analysis using OpenAI's GPT-3.5-turbo model. The analysis includes summarizing the content, calculating metadata, and suggesting social media posts for various platforms. 
+This repository contains a serverless application that takes Markdown, generates an audio file using AWS Polly, and performs text analysis using OpenAI's GPT-4 model. The analysis includes summarizing the content, calculating metadata, and scheduling social media posts.
 
 For full details, please [check out the blog post](https://readysetcloud.io/blog/allen.helton/blog-level-up-writer-analytics-and-text-to-speech).
+
+*Note - An updated blog post with newer features [can be found here](https://readysetcloud.io/blog/allen.helton/automatic-social-posts)*
 
 ## Workflow Overview
 
@@ -10,8 +12,9 @@ For full details, please [check out the blog post](https://readysetcloud.io/blog
 
 1. **Transform Markdown**: The workflow starts by converting the markdown blog post into plain text.
 2. **Analyze**: The plain text is then analyzed in parallel. One branch uses ChatGPT to generate a summary, metadata, and social media post suggestions. The other branch uses AWS Polly to create an audio version of the blog post.
-3. **Format Processed Data**: The analysis results and the audio file link are then formatted into a structured object.
-4. **Save Processed Data**: Finally, the analysis results are saved in both the GitHub repository and a DynamoDB table.
+3. **Schedule** - If you use my [social media scheduler](https://github.com/allenheltondev/social-media-scheduler), social posts generated in this workflow will be automatically scheduled and published for you automatically
+4. **Format Processed Data**: The analysis results and the audio file link are then formatted into a structured object.
+5. **Save Processed Data**: Finally, the analysis results are saved in both the GitHub repository and a DynamoDB table.
 
 ## Deployment
 
@@ -51,14 +54,6 @@ The analysis generated from ChatGPT is saved in the following format in DynamoDB
     "writingStyle": "Conversational with a touch of humor"
  },
  "audio": "{link to public audio file in S3}",
- "processedOn": "{date of processing}",
- "social": {
-  "linkedIn": "",
-  "reddit": {
-   "subreddit": "",
-   "title": ""
-  },
-  "twitter": ""
- }
+ "processedOn": "{date of processing}"
 }
 ```
