@@ -178,8 +178,28 @@
           }
         },
         {
-          "StartAt": "Start Text To Speech",
+          "StartAt": "Has audio already?",
           "States": {
+          "Has audio already?": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.transformed.Payload.metadata.audio",
+                  "IsPresent": true,
+                  "Next": "Pass through audio"
+                }
+              ],
+              "Default": "Start Text To Speech"
+            },
+            "Pass through audio": {
+              "Type": "Pass",
+              "End": true,
+              "Parameters": {
+                "SynthesisTask": {
+                  "OutputUri.$": "$.transformed.Payload.metadata.audio"
+                }
+              }
+            },
             "Start Text To Speech": {
               "Type": "Task",
               "Parameters": {
@@ -332,7 +352,7 @@
                     "S": "article"
                   }
                 },
-                "UpdateExpression": "SET analysis = :analysis, social = :social, audio = :audio, processedOn = :processedOn",
+                "UpdateExpression": "SET analysis = :analysis, audio = :audio, processedOn = :processedOn",
                 "ExpressionAttributeValues": {
                   ":processedOn": {
                     "S.$": "$$.Execution.StartTime"
