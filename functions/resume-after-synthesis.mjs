@@ -1,11 +1,11 @@
-const { DynamoDBClient, GetItemCommand } = require('@aws-sdk/client-dynamodb');
-const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
-const { SFNClient, SendTaskSuccessCommand } = require('@aws-sdk/client-sfn');
+import { DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb';
+import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
+import { SFNClient, SendTaskSuccessCommand } from '@aws-sdk/client-sfn';
 
 const ddb = new DynamoDBClient();
 const sfn = new SFNClient();
 
-exports.handler = async (event) => {
+export const handler = async (event) => {
   await Promise.all(event.Records.map(async (record) => {
     const item = JSON.parse(record.body);
     const detail = JSON.parse(item.Message);

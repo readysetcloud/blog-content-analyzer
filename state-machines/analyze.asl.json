@@ -1,15 +1,33 @@
 {
   "Comment": "Analyze blog data and save results",
-  "StartAt": "Transform Markdown",
+  "StartAt": "Event Source?",
   "States": {
+    "Event Source?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.detail",
+          "IsPresent": true,
+          "Next": "Format Input From Event"
+        }
+      ],
+      "Default": "Transform Markdown"
+    },
+    "Format Input From Event": {
+      "Type": "Pass",
+      "Next": "Transform Markdown",
+      "Parameters": {
+        "commit.$": "$.detail.commit",
+        "fileName.$": "$.detail.fileName",
+        "key.$": "$.detail.key"
+      }
+    },
     "Transform Markdown": {
       "Type": "Task",
       "Resource": "${LambdaInvoke}",
       "Parameters": {
         "FunctionName": "${MarkdownToText}",
-        "Payload": {
-          "content.$": "$.content"
-        }
+        "Payload.$": "$"
       },
       "Retry": [
         {
@@ -124,7 +142,7 @@
                         }
                       ],
                       "Next": "Format Scheduler Event",
-                      "OutputPath": "$.Payload"
+                      "ResultPath": "$.messages"
                     },
                     "Format Scheduler Event": {
                       "Type": "Task",
@@ -133,8 +151,8 @@
                       "Parameters": {
                         "FunctionName": "${FormatSocialPostEvent}",
                         "Payload": {
-                          "messages.$": "$.response",
-                          "campaign.$": "$$.Execution.Input.fileName",
+                          "messages.$": "$.messages.Payload.response",
+                          "campaign.$": "$.fileName",
                           "platform": "twitter"
                         }
                       },
@@ -218,7 +236,7 @@
               "Type": "Task",
               "Resource": "${DynamoDbPutAndWait}",
               "Parameters": {
-                "TableName": "${DynamoTableName}",
+                "TableName": "${TableName}",
                 "Item": {
                   "pk": {
                     "S.$": "$.SynthesisTask.TaskId"
@@ -247,7 +265,7 @@
                       "Type": "Task",
                       "Resource": "${DynamoDbDeleteItem}",
                       "Parameters": {
-                        "TableName": "${DynamoTableName}",
+                        "TableName": "${TableName}",
                         "Key": {
                           "pk": {
                             "S.$": "$.SynthesisTask.TaskId"
@@ -293,7 +311,9 @@
         "description.$": "$.analysis[0].description.Payload.response",
         "audio.$": "$.analysis[1].SynthesisTask.OutputUri",
         "originalMetadata.$": "$.transformed.Payload.metadata",
-        "markdown.$": "$.transformed.Payload.markdown"
+        "markdown.$": "$.transformed.Payload.markdown",
+        "fileName.$": "$.fileName",
+        "key.$": "$.key"
       },
       "Next": "Save Processed Data"
     },
@@ -315,7 +335,7 @@
                   "audio.$": "$.audio",
                   "newMetadata.$": "$.metadata",
                   "description.$": "$.description",
-                  "fileName.$": "$$.Execution.Input.fileName",
+                  "fileName.$": "$.fileName",
                   "markdown.$": "$.markdown"
                 }
               },
@@ -343,10 +363,10 @@
               "Type": "Task",
               "Resource": "${DynamoDbUpdateItem}",
               "Parameters": {
-                "TableName": "${DynamoTableName}",
+                "TableName": "${TableName}",
                 "Key": {
                   "pk": {
-                    "S.$": "$$.Execution.Input.key"
+                    "S.$": "$.key"
                   },
                   "sk": {
                     "S": "article"

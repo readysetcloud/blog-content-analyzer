@@ -1,6 +1,6 @@
-# Blog Analyzer
+# Blog Content Analyzer
 
-This repository contains a serverless application that takes Markdown, generates an audio file using AWS Polly, and performs text analysis using OpenAI's GPT-4 model. The analysis includes summarizing the content, calculating metadata, and scheduling social media posts.
+This service contains a serverless application that takes Markdown, generates an audio file using AWS Polly, and performs text analysis using OpenAI's GPT-4 model. The analysis includes summarizing the content, calculating metadata, and scheduling social media posts.
 
 For full details, please [check out the blog post](https://readysetcloud.io/blog/allen.helton/blog-level-up-writer-analytics-and-text-to-speech).
 

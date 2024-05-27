@@ -1,11 +1,13 @@
-const { Octokit } = require('@octokit/rest');
-const frontmatter = require('@github-docs/frontmatter');
-const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
+import { Octokit } from '@octokit/rest';
+import frontmatter from '@github-docs/frontmatter';
+import { getSecret } from '@aws-lambda-powertools/parameters/secrets';
 
-const secrets = new SecretsManagerClient();
 let octokit;
 
-exports.handler = async (state) => {
+export const handler = async (state) => {
+  const shouldCommit = process.env.SHOULD_COMMIT || 'false';
+  if(!shouldCommit) return { success: true };
+
   const metadata = { ...state.originalMetadata, metadata: state.newMetadata, audio: state.audio, ogDescription: state.description };
   const content = frontmatter.stringify(state.markdown, metadata);
 
@@ -32,19 +34,11 @@ exports.handler = async (state) => {
   }
 
   return { success: true };
-}
-
-const getSecret = async (secretKey) => {
-  const secretResponse = await secrets.send(new GetSecretValueCommand({ SecretId: process.env.SECRET_ID }));
-  if (secretResponse) {
-    cachedSecrets = JSON.parse(secretResponse.SecretString);
-    return cachedSecrets[secretKey];
-  }
 };
 
 const setupOctokit = async () => {
   if (!octokit) {
-    const gitHubSecret = await getSecret('github');
-    octokit = new Octokit({ auth: gitHubSecret });
+    const secrets = await getSecret(process.env.SECRET_ID, { transform: 'json' });
+    octokit = new Octokit({ auth: secrets.github });
   }
 };

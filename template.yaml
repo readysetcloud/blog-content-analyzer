@@ -3,10 +3,22 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   Analyze blog post text
 
+Metadata:
+  esbuild-properties: &esbuild-properties
+    Format: esm
+    Minify: true
+    OutExtension:
+      - .js=.mjs
+    Target: es2020
+    Sourcemap: false
+    EntryPoints:
+      - index.mjs
+    Banner:
+      - js=import { createRequire } from 'module'; const require = createRequire(import.meta.url);
+    External:
+      - '@aws-sdk/*'
+
 Parameters:
-  TableName:
-    Type: String
-    Description: Name of DynamoDB table to store data
   GitHubOwner:
     Type: String
   GitHubRepo:
@@ -14,48 +26,92 @@ Parameters:
   BucketName:
     Type: String
     Description: Name of the S3 Bucket to store generated audio
+  Environment:
+    Type: String
+    AllowedValues: [ sandbox, stage, production ]
+    Default: sandbox
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, 'production']
 
 Globals:
   Function:
-    Runtime: nodejs18.x
+    Runtime: nodejs20.x
     Architectures:
       - arm64
     Tracing: Active
     Timeout: 3
     MemorySize: 1024
-    Handler: index.handler
+    CodeUri: functions
     Environment:
       Variables:
         AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
 
 Resources:
+  BlogAnalysisTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+
   MarkdownToTextFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        <<: *esbuild-properties
+        EntryPoints:
+          - markdown-to-text.mjs
     Properties:
-      CodeUri: functions/markdown-to-text
+      Handler: markdown-to-text.handler
       Policies:
         - AWSLambdaBasicExecutionRole
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: "{{resolve:ssm:/serverless-toolbox/secrets}}"
+      Environment:
+        Variables:
+          OWNER: !Ref GitHubOwner
+          REPO: !Ref GitHubRepo
+          SECRET_ID: "{{resolve:ssm:/serverless-toolbox/secrets}}"
 
   TextSynthesisCompleteTopic:
     Type: AWS::SNS::Topic
 
   ResumeWorkflowAfterSynthesisFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        <<: *esbuild-properties
+        EntryPoints:
+          - resume-after-synthesis.mjs
     Properties:
-      CodeUri: functions/resume-after-synthesis
+      Handler: resume-after-synthesis.handler
       Policies:
         - AWSLambdaBasicExecutionRole
         - Version: 2012-10-17
           Statement:
             - Effect: Allow
               Action: dynamodb:GetItem
-              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}
+              Resource: !GetAtt BlogAnalysisTable.Arn
             - Effect: Allow
               Action: states:SendTaskSuccess
               Resource: '*'
       Environment:
         Variables:
-          TABLE_NAME: !Ref TableName
+          TABLE_NAME: !Ref BlogAnalysisTable
       Events:
         JobComplete:
           Type: SNS
@@ -65,8 +121,14 @@ Resources:
 
   UpdateInGitHubFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        <<: *esbuild-properties
+        EntryPoints:
+          - update-in-github.mjs
     Properties:
-      CodeUri: functions/update-in-github
+      Handler: update-in-github.handler
       Policies:
         - AWSLambdaBasicExecutionRole
         - Version: 2012-10-17
@@ -80,11 +142,18 @@ Resources:
           REPO: !Ref GitHubRepo
           CONTENT_PATH: content/blog
           SECRET_ID: "{{resolve:ssm:/serverless-toolbox/secrets}}"
+          SHOULD_COMMIT: !If [IsProduction, 'true', 'false']
 
   FormatSocialPostEventFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        <<: *esbuild-properties
+        EntryPoints:
+          - format-social-post-event.mjs
     Properties:
-      CodeUri: functions/format-social-post-event
+      Handler: format-social-post-event.handler
       Policies:
         - AWSLambdaBasicExecutionRole
 
@@ -92,7 +161,7 @@ Resources:
     Type: AWS::Serverless::StateMachine
     Properties:
       Type: STANDARD
-      DefinitionUri: workflows/analyze.asl.json
+      DefinitionUri: state-machines/analyze.asl.json
       DefinitionSubstitutions:
         LambdaInvoke: !Sub arn:${AWS::Partition}:states:::lambda:invoke
         MarkdownToText: !GetAtt MarkdownToTextFunction.Arn
@@ -102,7 +171,7 @@ Resources:
         PollyCompleteTopic: !Ref TextSynthesisCompleteTopic
         StartSynthesisTask: !Sub arn:${AWS::Partition}:states:::aws-sdk:polly:startSpeechSynthesisTask
         DynamoDbPutAndWait: !Sub arn:${AWS::Partition}:states:::aws-sdk:dynamodb:putItem.waitForTaskToken
-        DynamoTableName: !Ref TableName
+        TableName: !Ref BlogAnalysisTable
         DynamoDbDeleteItem: !Sub arn:${AWS::Partition}:states:::dynamodb:deleteItem
         S3PutObjectAcl: !Sub arn:${AWS::Partition}:states:::aws-sdk:s3:putObjectAcl
         UpdateInGitHub: !GetAtt UpdateInGitHubFunction.Arn
@@ -123,7 +192,7 @@ Resources:
                 - dynamodb:PutItem
                 - dynamodb:DeleteItem
                 - dynamodb:UpdateItem
-              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}
+              Resource: !GetAtt BlogAnalysisTable.Arn
             - Effect: Allow
               Action:
                 - polly:StartSpeechSynthesisTask
@@ -141,3 +210,10 @@ Resources:
             - Effect: Allow
               Action: events:PutEvents
               Resource: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
+      Events:
+        EventInvocation:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              detail-type:
+                - Start Analysis

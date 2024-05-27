@@ -1,5 +1,6 @@
-const short = require('short-uuid');
-exports.handler = async (state) => {
+import short from 'short-uuid';
+
+export const handler = async (state) => {
   try {
     const messages = state.messages.map(m => {
       return {
@@ -15,4 +16,4 @@ exports.handler = async (state) => {
     console.error(err);
     throw err;
   }
-}
+};
