@@ -1,26 +1,91 @@
 {
   "Comment": "Analyze blog data and save results",
-  "StartAt": "Event Source?",
+  "StartAt": "Get Idempotency Record",
   "States": {
-    "Event Source?": {
+    "Get Idempotency Record": {
+      "Type": "Task",
+      "Resource": "${DynamoDbGetItem}",
+      "Parameters": {
+        "TableName": "${TableName}",
+        "Key": {
+          "pk": {
+            "S.$": "$$.Execution.Input.detail.key"
+          },
+          "sk": {
+            "S": "blog"
+          }
+        }
+      },
+      "Next": "Has Been Processed?",
+      "ResultPath": "$.record"
+    },
+    "Has Been Processed?": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.detail",
+          "Not": {
+            "Variable": "$.record.Item",
+            "IsPresent": true
+          },
+          "Next": "Set Record To In Progress"
+        },
+        {
+          "And": [
+            {
+              "Variable": "$.record.Item",
+              "IsPresent": true
+            },
+            {
+              "Variable": "$.record.Item.status.S",
+              "StringEquals": "failed"
+            }
+          ],
+          "Next": "Set Record To In Progress"
+        }
+      ],
+      "Default": "Success - Duplicate Request"
+    },
+    "Set Record To In Progress": {
+      "Type": "Task",
+      "Resource": "${DynamoDbUpdateItem}",
+      "Parameters": {
+        "TableName": "${TableName}",
+        "Key": {
+          "pk": {
+            "S.$": "$$.Execution.Input.detail.key"
+          },
+          "sk": {
+            "S": "blog"
+          }
+        },
+        "UpdateExpression": "SET #status = :status",
+        "ExpressionAttributeNames": {
+          "#status": "status"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "in progress"
+          }
+        }
+      },
+      "Next": "Is Scheduled In The Future?",
+      "ResultPath": null
+    },
+    "Is Scheduled In The Future?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.detail.futureDate",
           "IsPresent": true,
-          "Next": "Format Input From Event"
+          "Next": "Wait For Future Date"
         }
       ],
       "Default": "Transform Markdown"
     },
-    "Format Input From Event": {
-      "Type": "Pass",
-      "Next": "Transform Markdown",
-      "Parameters": {
-        "commit.$": "$.detail.commit",
-        "fileName.$": "$.detail.fileName",
-        "key.$": "$.detail.key"
-      }
+    "Wait For Future Date": {
+      "Type": "Wait",
+      "TimestampPath": "$.detail.futureDate",
+      "Next": "Transform Markdown"
     },
     "Transform Markdown": {
       "Type": "Task",
@@ -42,8 +107,42 @@
           "BackoffRate": 2
         }
       ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Update Record - Failure"
+        }
+      ],
       "Next": "Analyze",
       "ResultPath": "$.transformed"
+    },
+    "Update Record - Failure": {
+      "Type": "Task",
+      "Resource": "${DynamoDbUpdateItem}",
+      "Parameters": {
+        "TableName": "${TableName}",
+        "Key": {
+          "pk": {
+            "S.$": "$$.Execution.Input.detail.key"
+          },
+          "sk": {
+            "S": "blog"
+          }
+        },
+        "UpdateExpression": "SET #status = :status",
+        "ExpressionAttributeNames": {
+          "#status": "status"
+        },
+        "ExpressionAttributeValues": {
+          ":status": {
+            "S": "failed"
+          }
+        }
+      },
+      "End": true,
+      "ResultPath": null
     },
     "Analyze": {
       "Type": "Parallel",
@@ -57,9 +156,9 @@
               "Parameters": {
                 "FunctionName": "${AskChatGPT}",
                 "Payload": {
-                  "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
-                  "systemContext": "You are an AI for professional writers. You process technical content and summarize it for non-technical people and beginners",
-                  "query.$": "States.Format('Summarize the content of this blog in for an OG description for high SEO ranking. It should mimic the authors tone and be in the POV of the author: {}', $.transformed.Payload.text)",
+                  "conversationKey.$": "States.Format('{}-metadata', $$.Execution.Input.detail.key)",
+                  "systemContext": "You are a professional content summarizer specializing in presenting technical content to non-technical people and beginners.",
+                  "query.$": "States.Format('Summarize the content of this blog with an OG description for high SEO ranking. It should mimic the authors tone and be in the POV of the author: {}', $.transformed.Payload.text)",
                   "rememberResponse": true
                 }
               },
@@ -91,8 +190,8 @@
                       "Parameters": {
                         "FunctionName": "${AskChatGPT}",
                         "Payload": {
-                          "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
-                          "query": "Create a json object for that content with the following properties: sentiment, tone, writingStyle, skillLevel, and wordCount. Sentiment should have a single word value. WritingStyle should summarize the writer's style in fewer than 30 words. SkillLevel should rate the writing skill level on a scale of 1-10. Wordcount is the total number of words in the content.",
+                          "conversationKey.$": "States.Format('{}-metadata', $$.Execution.Input.detail.key)",
+                          "query": "Create a json object for that content with the following properties: sentiment, tone, writingStyle, and skillLevel. Sentiment should have a single word value. WritingStyle should summarize the writer's style in fewer than 30 words. SkillLevel should rate the writing skill level on a scale of 1-10.",
                           "outputFormat": "json"
                         }
                       },
@@ -123,8 +222,8 @@
                       "Parameters": {
                         "FunctionName": "${AskChatGPT}",
                         "Payload": {
-                          "conversationKey.$": "States.Format('{}-{}-metadata', $.commit, $.fileName)",
-                          "query.$": "States.Format('Create 8 twitter posts that will advertise this blog over the next 2 months. Create them in the writers tone and style and use at most one emoji. Include this link to the article at the end of the tweet: https://readysetcloud.io{}. Respond only with a JSON array of strings, each message as a new string and do not number them', $.key)",
+                          "conversationKey.$": "States.Format('{}-metadata', $$.Execution.Input.detail.key)",
+                          "query.$": "States.Format('Create 8 twitter posts that will advertise this blog over the next 2 months. Create them in the writers tone and style and use at most one emoji. Include this link to the article at the end of the tweet: https://readysetcloud.io{}. Respond only with a JSON array of strings, each message as a new string and do not number them', $$.Execution.Input.detail.url)",
                           "outputFormat": "json"
                         }
                       },
@@ -312,8 +411,7 @@
         "audio.$": "$.analysis[1].SynthesisTask.OutputUri",
         "originalMetadata.$": "$.transformed.Payload.metadata",
         "markdown.$": "$.transformed.Payload.markdown",
-        "fileName.$": "$.fileName",
-        "key.$": "$.key"
+        "wordCount.$": "$.transformed.Payload.wordCount"
       },
       "Next": "Save Processed Data"
     },
@@ -366,10 +464,10 @@
                 "TableName": "${TableName}",
                 "Key": {
                   "pk": {
-                    "S.$": "$.key"
+                    "S.$": "$$.Execution.Input.detail.url"
                   },
                   "sk": {
-                    "S": "article"
+                    "S": "blog"
                   }
                 },
                 "UpdateExpression": "SET analysis = :analysis, audio = :audio, processedOn = :processedOn",
@@ -389,7 +487,7 @@
                         "S.$": "$.metadata.tone"
                       },
                       "wordCount": {
-                        "N.$": "States.Format('{}', $.metadata.wordCount)"
+                        "N.$": "States.Format('{}', $.wordCount)"
                       },
                       "writingStyle": {
                         "S.$": "$.metadata.writingStyle"
@@ -404,8 +502,43 @@
               "End": true
             }
           }
+        },
+        {
+          "StartAt": "Update Record - Success",
+          "States": {
+            "Update Record - Success": {
+              "Type": "Task",
+              "Resource": "${DynamoDbUpdateItem}",
+              "Parameters": {
+                "TableName": "${TableName}",
+                "Key": {
+                  "pk": {
+                    "S.$": "$$.Execution.Input.detail.key"
+                  },
+                  "sk": {
+                    "S": "blog"
+                  }
+                },
+                "UpdateExpression": "SET #status = :status",
+                "ExpressionAttributeNames": {
+                  "#status": "status"
+                },
+                "ExpressionAttributeValues": {
+                  ":status": {
+                    "S": "succeeded"
+                  }
+                }
+              },
+              "ResultPath": null,
+              "End": true
+            }
+          }
         }
       ]
+    },
+    "Success - Duplicate Request": {
+      "Type": "Succeed",
+      "Comment": "This blog has already been processed"
     }
   }
 }

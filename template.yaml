@@ -173,6 +173,7 @@ Resources:
         DynamoDbPutAndWait: !Sub arn:${AWS::Partition}:states:::aws-sdk:dynamodb:putItem.waitForTaskToken
         TableName: !Ref BlogAnalysisTable
         DynamoDbDeleteItem: !Sub arn:${AWS::Partition}:states:::dynamodb:deleteItem
+        DynamoDbGetItem: !Sub arn:${AWS::Partition}:states:::dynamodb:getItem
         S3PutObjectAcl: !Sub arn:${AWS::Partition}:states:::aws-sdk:s3:putObjectAcl
         UpdateInGitHub: !GetAtt UpdateInGitHubFunction.Arn
         DynamoDbUpdateItem: !Sub arn:${AWS::Partition}:states:::dynamodb:updateItem
@@ -190,6 +191,7 @@ Resources:
             - Effect: Allow
               Action:
                 - dynamodb:PutItem
+                - dynamodb:GetItem
                 - dynamodb:DeleteItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt BlogAnalysisTable.Arn
@@ -216,4 +218,4 @@ Resources:
           Properties:
             Pattern:
               detail-type:
-                - Start Analysis
+                - Process New Blog

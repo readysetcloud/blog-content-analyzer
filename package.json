@@ -14,7 +14,8 @@
     "@octokit/rest": "^20.1.1",
     "markdown-to-txt": "^2.0.1",
     "octokit": "^4.0.2",
-    "short-uuid": "^5.2.0"
+    "short-uuid": "^5.2.0",
+    "word-count": "^0.2.2"
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.584.0",

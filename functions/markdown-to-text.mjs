@@ -1,6 +1,7 @@
 import frontmatter from '@github-docs/frontmatter';
 import { markdownToTxt } from 'markdown-to-txt';
 import { getOctokit } from './utils/helpers.mjs';
+import wordCount from 'word-count';
 
 export const handler = async (state) => {
   let { content } = state;
@@ -13,7 +14,8 @@ export const handler = async (state) => {
   return {
     metadata: post.data,
     text: plainText,
-    markdown: post.content
+    markdown: post.content,
+    wordCount: wordCount(plainText)
   };
 };
 
