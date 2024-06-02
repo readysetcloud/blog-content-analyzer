@@ -19,10 +19,10 @@
     "word-count": "^0.2.2"
   },
   "devDependencies": {
-    "@aws-sdk/client-dynamodb": "^3.584.0",
-    "@aws-sdk/client-secrets-manager": "^3.583.0",
-    "@aws-sdk/client-sfn": "^3.583.0",
-    "@aws-sdk/util-dynamodb": "^3.584.0",
+    "@aws-sdk/client-dynamodb": "^3.588.0",
+    "@aws-sdk/client-secrets-manager": "^3.588.0",
+    "@aws-sdk/client-sfn": "^3.588.0",
+    "@aws-sdk/util-dynamodb": "^3.588.0",
     "@eslint/js": "^9.4.0",
     "eslint": "^9.4.0",
     "globals": "^15.3.0"
