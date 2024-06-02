@@ -1,0 +1,47 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.ref_name }}
+
+permissions:
+  contents: read
+
+env:
+  BRANCH_NAME: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || github.event_name == 'push' && github.ref }}
+
+jobs:
+  predeploy-validations:
+    name: Pre-deploy validations
+    uses: ./.github/workflows/pre-deploy-validation.yaml
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-east-1
+          aws-access-key-id: ${{ secrets.PROD_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.PROD_SECRET_KEY }}
+
+      - name: SAM Build and Deploy
+        run: |
+          npm install -g esbuild
+          npm ci
+
+          sam --info
+          sam build --parallel
+
+          sam deploy \
+          --stack-name blog-content-analyzer \
+          --resolve-s3 \
+          --no-fail-on-empty-changeset \
+          --capabilities CAPABILITY_IAM \
+          --parameter-overrides Environment=production
