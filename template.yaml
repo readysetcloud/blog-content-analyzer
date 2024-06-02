@@ -19,20 +19,10 @@ Metadata:
       - '@aws-sdk/*'
 
 Parameters:
-  GitHubOwner:
-    Type: String
-  GitHubRepo:
-    Type: String
-  BucketName:
-    Type: String
-    Description: Name of the S3 Bucket to store generated audio
   Environment:
     Type: String
     AllowedValues: [ sandbox, stage, production ]
     Default: sandbox
-
-Conditions:
-  IsProduction: !Equals [!Ref Environment, 'production']
 
 Globals:
   Function:
@@ -79,12 +69,12 @@ Resources:
           Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
-              Resource: "{{resolve:ssm:/serverless-toolbox/secrets}}"
+              Resource: "{{resolve:ssm:/readysetcloud/secrets}}"
       Environment:
         Variables:
-          OWNER: !Ref GitHubOwner
-          REPO: !Ref GitHubRepo
-          SECRET_ID: "{{resolve:ssm:/serverless-toolbox/secrets}}"
+          OWNER: '{{resolve:ssm:/readysetcloud/github-owner}}'
+          REPO: '{{resolve:ssm:/readysetcloud/github-repo}}'
+          SECRET_ID: "{{resolve:ssm:/readysetcloud/secrets}}"
 
   TextSynthesisCompleteTopic:
     Type: AWS::SNS::Topic
@@ -135,14 +125,13 @@ Resources:
           Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
-              Resource: "{{resolve:ssm:/serverless-toolbox/secrets}}"
+              Resource: "{{resolve:ssm:/readysetcloud/secrets}}"
       Environment:
         Variables:
-          OWNER: !Ref GitHubOwner
-          REPO: !Ref GitHubRepo
-          CONTENT_PATH: content/blog
-          SECRET_ID: "{{resolve:ssm:/serverless-toolbox/secrets}}"
-          SHOULD_COMMIT: !If [IsProduction, 'true', 'false']
+          OWNER: '{{resolve:ssm:/readysetcloud/github-owner}}'
+          REPO: '{{resolve:ssm:/readysetcloud/github-repo}}'
+          SECRET_ID: "{{resolve:ssm:/readysetcloud/secrets}}"
+          SHOULD_COMMIT: "{{resolve:ssm:/readysetcloud/update-github-source-code}}"
 
   FormatSocialPostEventFunction:
     Type: AWS::Serverless::Function
@@ -166,8 +155,8 @@ Resources:
         LambdaInvoke: !Sub arn:${AWS::Partition}:states:::lambda:invoke
         MarkdownToText: !GetAtt MarkdownToTextFunction.Arn
         FormatSocialPostEvent: !GetAtt FormatSocialPostEventFunction.Arn
-        AskChatGPT: "{{resolve:ssm:/serverless-toolbox/ask-chatgpt}}"
-        S3BucketName: !Ref BucketName
+        AskChatGPT: "{{resolve:ssm:/readysetcloud/ask-openai}}"
+        S3BucketName: "{{resolve:ssm:/readysetcloud/assets-bucket}}"
         PollyCompleteTopic: !Ref TextSynthesisCompleteTopic
         StartSynthesisTask: !Sub arn:${AWS::Partition}:states:::aws-sdk:polly:startSpeechSynthesisTask
         DynamoDbPutAndWait: !Sub arn:${AWS::Partition}:states:::aws-sdk:dynamodb:putItem.waitForTaskToken
@@ -185,7 +174,7 @@ Resources:
               Action: lambda:InvokeFunction
               Resource:
                 - !GetAtt MarkdownToTextFunction.Arn
-                - "{{resolve:ssm:/serverless-toolbox/ask-chatgpt}}"
+                - "{{resolve:ssm:/readysetcloud/ask-openai}}"
                 - !GetAtt UpdateInGitHubFunction.Arn
                 - !GetAtt FormatSocialPostEventFunction.Arn
             - Effect: Allow
@@ -205,7 +194,11 @@ Resources:
               Action:
                 - s3:PutObject
                 - s3:PutObjectAcl
-              Resource: !Sub arn:${AWS::Partition}:s3:::${BucketName}/audio/*
+              Resource:
+                Fn::Sub:
+                  - arn:${Partition}:s3:::${BucketName}/audio/*
+                  - Partition: !Ref AWS::Partition
+                    BucketName: "{{resolve:ssm:/readysetcloud/assets-bucket}}"
             - Effect: Allow
               Action: sns:Publish
               Resource: !Ref TextSynthesisCompleteTopic

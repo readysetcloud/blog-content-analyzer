@@ -1,0 +1,107 @@
+name: Deploy to Stage via Pull Request
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      main
+
+concurrency:
+  group: ${{ github.ref_name }}
+
+permissions:
+  contents: read
+
+env:
+  BRANCH_NAME: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || github.event_name == 'pull_request' && github.head_ref }}
+
+jobs:
+  predeploy-validations:
+    name: Pre-deploy validations
+    uses: ./.github/workflows/pre-deploy-validation.yaml
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-east-1
+          aws-access-key-id: ${{ secrets.STAGE_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.STAGE_SECRET_KEY }}
+
+      - name: SAM Build and Deploy
+        run: |
+          npm install -g esbuild
+          npm ci
+
+          sam --info
+          sam build --parallel
+
+          sam deploy \
+          --stack-name blog-content-analyzer \
+          --resolve-s3 \
+          --no-fail-on-empty-changeset \
+          --capabilities CAPABILITY_IAM \
+          --parameter-overrides Environment=stage
+
+  deploy-dependabot:
+    name: Deploy Dependabot Updates
+    if: ${{ github.actor == 'dependabot[bot]' && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-east-1
+          aws-access-key-id: ${{ secrets.DEPENDABOT_STAGE_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.DEPENDABOT_STAGE_SECRET_KEY }}
+
+      - name: SAM Build and Deploy
+        run: |
+          npm install -g esbuild
+          npm ci
+
+          sam --info
+          sam build --parallel
+
+          sam deploy \
+          --stack-name blog-content-analyzer \
+          --resolve-s3 \
+          --no-fail-on-empty-changeset \
+          --capabilities CAPABILITY_IAM \
+          --parameter-overrides Environment=stage
+
+  auto-merge-dependabot-update:
+    name: Auto Merge Dependabot Update
+    needs: [deploy-dependabot]
+    if: ${{ github.actor == 'dependabot[bot]' && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Dependabot metadata
+        id: dependabot-metadata
+        uses: dependabot/fetch-metadata@v2
+      - uses: actions/checkout@v4
+      - name: Approve a PR if not already approved
+        if: ${{ steps.dependabot-metadata.outputs.update-type == 'version-update:semver-minor' || steps.dependabot-metadata.outputs.update-type == 'version-update:semver-patch' || steps.dependabot-metadata.outputs.package-ecosystem == 'github_actions' }}
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr checkout "$PR_URL" # sets the upstream metadata for `gh pr status`
+
+          if [ "$(gh pr status --json reviewDecision -q .currentBranch.reviewDecision)" != "APPROVED" ]; then
+            gh pr review --approve "$PR_URL"
+          fi
+
+          gh pr merge --auto --merge "$PR_URL"
