@@ -145,6 +145,9 @@ Resources:
       Handler: format-social-post-event.handler
       Policies:
         - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          ACCOUNT_ID: readysetcloud
 
   AnalyzePostStateMachine:
     Type: AWS::Serverless::StateMachine
