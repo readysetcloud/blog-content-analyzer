@@ -5,6 +5,7 @@ export const handler = async (state) => {
     const messages = state.messages.map(m => {
       return {
         referenceNumber: short.generate(),
+        accountId: process.env.ACCOUNT_ID,
         message: m,
         platform: state.platform,
         ...state.campaign && { campaign: state.campaign }
