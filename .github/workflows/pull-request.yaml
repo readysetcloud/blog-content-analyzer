@@ -92,16 +92,21 @@ jobs:
         id: dependabot-metadata
         uses: dependabot/fetch-metadata@v3
       - uses: actions/checkout@v7
-      - name: Approve a PR if not already approved
+      - name: Enable auto-merge for approved Dependabot updates
         if: ${{ steps.dependabot-metadata.outputs.update-type == 'version-update:semver-minor' || steps.dependabot-metadata.outputs.update-type == 'version-update:semver-patch' || steps.dependabot-metadata.outputs.package-ecosystem == 'github_actions' }}
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr checkout "$PR_URL" # sets the upstream metadata for `gh pr status`
-
-          if [ "$(gh pr status --json reviewDecision -q .currentBranch.reviewDecision)" != "APPROVED" ]; then
-            gh pr review --approve "$PR_URL"
+          review_decision="$(gh pr view "$PR_URL" --json reviewDecision -q .reviewDecision)"
+          if [ "$review_decision" != "APPROVED" ]; then
+            echo "::notice::Dependabot PR is not approved; leaving it open for manual review."
+            exit 0
           fi
 
-          gh pr merge --auto --merge "$PR_URL"
+          auto_merge_allowed="$(gh repo view --json autoMergeAllowed -q .autoMergeAllowed)"
+          if [ "$auto_merge_allowed" = "true" ]; then
+            gh pr merge --auto --merge "$PR_URL"
+          else
+            echo "::notice::Repository auto-merge is disabled; leaving the approved Dependabot PR open for manual merge."
+          fi
